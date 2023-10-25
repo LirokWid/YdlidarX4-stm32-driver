@@ -19,19 +19,43 @@ int lidar_init(h_lidar_t *lidar,UART_HandleTypeDef* lidar_uart)
 	 * 4.Start scanning in circular DMA mode
 	 */
 
-	lidar->lidar_uart = lidar_uart;
+	lidar->uart = lidar_uart;
+	lidar->is_sending = 0;
 
 
-	//lidar_send_command(COMMAND_SOFT_RESTART);
+	lidar_send_command(COMMAND_STOP_SCAN);
 	HAL_Delay(200);
 	//1.
 	start_motor();
 
 	get_ID(lidar);
-	HAL_Delay(100);
 	get_health(lidar);
+
+	//Start point data transfer to the DMA
+	start_scan(lidar);
+
+	return SUCCESS;
 }
 
+int start_scan(h_lidar_t* lidar)
+{
+	HAL_UART_Receive_DMA(lidar->uart, lidar->dma_buffer, RX_BUFFER_SIZE);
+	if(lidar_send_command(COMMAND_START_SCAN))
+	{
+		lidar->is_sending = 1;
+
+		return SUCCESS;
+	}else{
+		return ERROR;
+	}
+}
+
+int stop_scan(h_lidar_t* lidar)
+{//TODO : this function
+	HAL_UART_DMAStop(lidar->uart);
+
+	return 0;
+}
 
 int get_ID(h_lidar_t* lidar)
 {
@@ -95,21 +119,17 @@ int get_health(h_lidar_t* lidar)
 void print_response(lidar_frame_response_t *response)
 {
 	printf("\n\n\rlidar response :\n\n\r");
-	printf("header code :\t\t%x:%x\r\n",response->start_sign[0],response->start_sign[1]);
-	printf("mode :\t\t\t%x\r\n",response->mode);
-	printf("typecode :\t\t%x\r\n",response->type_code);
+	printf("header code |%x:%x\r\n",response->start_sign[0],response->start_sign[1]);
+	printf("mode 		|%x\r\n",response->mode);
+	printf("typecode 	|%x\r\n",response->type_code);
 
-	printf("Response content :\t");
+	printf("Response content -> ");
 	for(int i=0;i<response->content_size;i++)
 	{
 		printf("%x",response->content[i]);
 	}
 	printf("\r\n");
-
-
 }
-
-
 
 
 void start_motor()
@@ -134,15 +154,10 @@ int lidar_send_command(LidarCommand command)
     // Convert the struct to a byte array
     uint8_t cmdBuffer[sizeof(LidarCommandStruct)];
     memcpy(cmdBuffer, &cmd, sizeof(LidarCommandStruct));
-
-
-    char charBuffer[30];
-    int size = sprintf(charBuffer," \n\rsent data : %x ",cmd.command);
-    send_terminal_buffer(charBuffer,size);
-
+    //TODO : passer en lecture de structure plutot que de passer par le buffer
 
     // Send the byte array over UART
-    int result = HAL_UART_Transmit(lidar.lidar_uart, cmdBuffer, size_cmd_struct, HAL_MAX_DELAY);
+    int result = HAL_UART_Transmit(lidar.uart, cmdBuffer, size_cmd_struct, HAL_MAX_DELAY);
 
     if (result == HAL_OK)
     {
@@ -157,26 +172,73 @@ int lidar_receive_blocking(lidar_frame_response_t *response)
 	uint8_t header_buffer[header_size];
 
 	//Receive header
-	if(HAL_UART_Receive(lidar.lidar_uart, header_buffer, header_size, 5000)!= HAL_OK){Error_Handler();}
+	if(HAL_UART_Receive(lidar.uart, header_buffer, header_size, 5000)!= HAL_OK){Error_Handler();}
 
 	//Then parse header response to get content size
-
-	response->start_sign[0] = header_buffer[0];
-	response->start_sign[1] = header_buffer[1];
-
 	response->content_size =
 			header_buffer[2] |
 			header_buffer[3] << 8 |
 			header_buffer[4] << 16 |
 		    (header_buffer[5] & 0x3F) << 24;		//Select only 6 bits LSB
 
+	//Receive main content from content size
+	if(HAL_UART_Receive(lidar.uart, response->content, response->content_size, 5000)!= HAL_OK){Error_Handler();}
+
+	//Finish to compute the header response and exit the function
+	response->start_sign[0] = header_buffer[0];
+	response->start_sign[1] = header_buffer[1];
 	response->mode = header_buffer[5]&0xC0;	//Mode is contained in 2 bits MSB of byte 5
 	response->type_code = header_buffer[6];
 
-
-	//Receive content
-	if(HAL_UART_Receive(lidar.lidar_uart, response->content, response->content_size, 5000)!= HAL_OK){Error_Handler();}
-
-
 	return SUCCESS;
+
 }
+
+void parse_dma_buffer()
+{
+	uint8_t data_to_parse[RX_BUFFER_SIZE];
+	for(int i=0;i<RX_BUFFER_SIZE;i++)
+	{
+		data_to_parse[i] = lidar.dma_buffer[i];
+		//printf("%x",data_to_parse[i]);
+	}
+
+
+	//find the first 0xAA55001 data that shows the start of a frame
+	uint8_t targetByte1 = 0xaa;  // First byte to search for
+	uint8_t targetByte2 = 0x55;  // Second byte to search for
+
+	int arraySize = RX_BUFFER_SIZE;
+
+	const int max_point_nb = 28;
+	const int header_size = 9;
+
+	float point_array[max_point_nb];
+
+	// Search for the first byte
+	for (int i = 0; i < arraySize - 1; i++)
+	{
+        if (data_to_parse[i] == targetByte1 && data_to_parse[i + 1] == targetByte2)
+        {// We found the start byte, now parsing the frame
+        	uint8_t CT 	= data_to_parse[i+2];								//Package type (i.d. type of packet
+			int 	LSN = data_to_parse[i+3];								//Number of sampling points
+			int 	FSA = data_to_parse[i+4] + (data_to_parse[i+5]<<8); 	//Start angle on 2 bytes LSB first
+			int 	LSA = data_to_parse[i+6] + (data_to_parse[i+7]<<8); 	//End angle on 2 bytes LSB first
+			int		CS	= data_to_parse[i+8] + (data_to_parse[i+9]<<8); 	//Checksum (XOR)
+
+			for (int j =0;j<LSN*2;j+2)//We know the number of point to sample, loop trough them to get the values
+			{
+				int dist = data_to_parse[i+j+header_size] +
+						(data_to_parse[i+j+header_size+1]<<8);//Distance is on 2 byte /4 to get distance(data sheet)
+				point_array[j] = (float) dist/4;
+				printf("%f |",point_array[j]);
+			}
+			printf("\n\r");
+//			printf("CT %02X | LSN %02X | FSA %d | LSA %d | CS %d\n\r",CT,LSN,FSA,LSA,CS);
+//			i+=9+(LSN*2);//Skip the parsed frame to find the next one
+	}
+	printf("\n\n\r");
+
+	}
+}
+

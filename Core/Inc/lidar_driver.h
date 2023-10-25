@@ -27,7 +27,10 @@
 #define DEF_COMMAND_GET_STATUS 	 	0x91
 #define DEF_COMMAND_SOFT_RESTART 	0x80
 
-#define RX_BUFFER_SIZE				100
+
+// The lidar frames are variable in size but approximatively 30 bytes
+//I am setting the buffer size here for 20 frames to have time to process the data between the DMA interrupts
+#define RX_BUFFER_SIZE				20*30
 
 #define LIDAR_SERIAL_SPEED 128000
 
@@ -57,11 +60,12 @@ typedef struct lidar_serial_drv_struct
 
 typedef struct h_lidar_struct
 {
-	UART_HandleTypeDef *lidar_uart;
+	UART_HandleTypeDef *uart;
 
 	uint8_t model;
 	uint8_t hardware;
 	uint8_t	serial_number[16];
+
 	struct firmware{
 		uint8_t major;
 		uint8_t minor;
@@ -71,6 +75,9 @@ typedef struct h_lidar_struct
 		uint8_t status;
 		uint8_t error_code[2];
 	}health;
+
+	int is_sending;
+	uint8_t dma_buffer[RX_BUFFER_SIZE];
 }h_lidar_t;
 
 typedef struct lidar_frame_response_t{
@@ -102,6 +109,9 @@ int get_health(h_lidar_t* lidar);
 
 int lidar_send_command(LidarCommand command);
 int lidar_receive_blocking(lidar_frame_response_t *response);
+
+int start_scan(h_lidar_t* lidar);
+
 
 
 #endif /* INC_LIDAR_DRIVER_H_ */

@@ -125,11 +125,10 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-  printf("Starting init\r\n");
+  printf("Starting initialization\r\n");
 
   HAL_Delay(1000);
   //StartReception();
-
   if(lidar_init(&lidar,&huart1) != SUCCESS)
   {
 	  printf("Could not init lidar, aborting start");
@@ -143,41 +142,13 @@ int main(void)
 
   //stop_motor();
 
-HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, 1);
   HAL_Delay(1000);
 
-
+  //HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, 1);
   while (1)
   {
-/*
-		  uint16_t var = (0xa5>>8)|DEF_COMMAND_GET_ID;
-		  uint8_t var2 = DEF_COMMAND_GET_ID;
+	  HAL_Delay(4000);
 
-
-		  int result = HAL_UART_Transmit(&huart1, &var, 2, HAL_MAX_DELAY);
-		  //result = HAL_UART_Transmit(&huart1, &var2, 1, HAL_MAX_DELAY);
-
-
-		  HAL_Delay(1000);
-
-
-		  */
-//	  send_terminal("main loop\n");
-//
-//	  if(lidar_init(&lidar,&huart1 != SUCCESS))
-//	  {
-//		  send_terminal_nr("Could not init lidar, aborting start");
-//		  Error_Handler();
-//	  }
-//
-//	  HAL_Delay(1000);
-
-//	  lidar_send_command(COMMAND_GET_STATUS);
-//	  HAL_Delay(1000);
-//	  lidar_send_command(COMMAND_START_SCAN);
-//	  HAL_Delay(500);
-//	  lidar_send_command(COMMAND_STOP_SCAN);
-//	  HAL_Delay(1000);
 
 
     /* USER CODE END WHILE */
@@ -288,60 +259,20 @@ void UserDataTreatment(UART_HandleTypeDef *huart, uint8_t* pData, uint16_t Size)
 }
 
 
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
+//https://community.st.com/t5/stm32-mcus/faq-stm32-hal-uart-driver-api-and-callbacks/ta-p/49301
+void HAL_UART_RxHalfCpltCallback(UART_HandleTypeDef *huart)
 {
-  static uint8_t old_pos = 0;
-  uint8_t *ptemp;
-  uint8_t i;
-
-  /* Check if number of received data in recpetion buffer has changed */
-  if (Size != old_pos)
-  {
-    /* Check if position of index in reception buffer has simply be increased
-       of if end of buffer has been reached */
-    if (Size > old_pos)
-    {
-      /* Current position is higher than previous one */
-      uwNbReceivedChars = Size - old_pos;
-      /* Copy received data in "User" buffer for evacuation */
-      for (i = 0; i < uwNbReceivedChars; i++)
-      {
-        pBufferReadyForUser[i] = aRXBufferUser[old_pos + i];
-      }
-    }
-    else
-    {
-      /* Current position is lower than previous one : end of buffer has been reached */
-      /* First copy data from current position till end of buffer */
-      uwNbReceivedChars = RX_BUFFER_SIZE - old_pos;
-      /* Copy received data in "User" buffer for evacuation */
-      for (i = 0; i < uwNbReceivedChars; i++)
-      {
-        pBufferReadyForUser[i] = aRXBufferUser[old_pos + i];
-      }
-      /* Check and continue with beginning of buffer */
-      if (Size > 0)
-      {
-        for (i = 0; i < Size; i++)
-        {
-          pBufferReadyForUser[uwNbReceivedChars + i] = aRXBufferUser[i];
-        }
-        uwNbReceivedChars += Size;
-      }
-    }
-    /* Process received data that has been extracted from Rx User buffer */
-    UserDataTreatment(huart, pBufferReadyForUser, uwNbReceivedChars);
-
-    /* Swap buffers for next bytes to be processed */
-    ptemp = pBufferReadyForUser;
-    pBufferReadyForUser = pBufferReadyForReception;
-    pBufferReadyForReception = ptemp;
-  }
-  /* Update old_pos as new reference of position in User Rx buffer that
-     indicates position to which data have been processed */
-  old_pos = Size;
 
 }
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart == lidar.uart)
+    {
+    	parse_dma_buffer();
+    }
+
+}
+
 
 /* USER CODE END 4 */
 
@@ -356,6 +287,8 @@ void Error_Handler(void)
   __disable_irq();
   while (1)
   {
+	  printf("error\n\r");
+	  HAL_Delay(2000);
   }
   /* USER CODE END Error_Handler_Debug */
 }
